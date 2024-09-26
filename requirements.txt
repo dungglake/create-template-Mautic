@@ -1,0 +1,7 @@
+Flask
+python-dotenv
+pydrive
+pillow
+requests
+opencv-python
+numpy
