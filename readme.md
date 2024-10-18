@@ -24,19 +24,24 @@ Invitation_WS#8/
 │   ├── invitation_creator.py         # Generates invitations from a template and personalizes them
 │   ├── invitation_uploader.py        # Uploads invitations to Google Drive and retrieves the link
 │   ├── mautic_api.py                 # Functions for working with Mautic API
+│   ├── utils.py                      # Utility functions for saving/loading processed emails
 │   └── routes.py                     # Handles the logic for fetching contacts and updating invitation links
 │
 ├── generated_invitations/            # Directory where generated invitations are saved (not included in repo)
 │
 ├── .env                              # Environment variables file for API credentials (not included in repo)
-├── app.py                            # Main entry point for the project
-├── auth.py                           # Handles authentication logic
+├── app.py                            # Main entry point for the project, handles task scheduling and RabbitMQ. Script that runs both Flask App and RabbitMQ Worker
+├── auth.py                           # Handles authentication logic for Google Drive
 ├── client_secrets.json               # Client secrets for Google Drive API authentication (not included in repo)
 ├── config.py                         # Common configurations (API paths, directories, etc.)
 ├── credentials.json                  # Authentication credentials for Google Drive API
 ├── readme.md                         # General project overview 
 ├── requirements.txt                  # Required libraries for the project
 ├── token_info.json                   # Stores token information for Mautic API (not included in repo)
+├── processed_emails.json             # Contains emails that have been included in RabbitMQ
+├── telegram_bot.py                   # Sends status updates via Telegram
+├── get_chat_id.py                    # This file is used to get chat id to send notifications from the system via Telegram bot.
+└── worker.py                         # RabbitMQ worker to handle invitation generation tasks from queue
 ```
 
 ## Installation Guide
@@ -70,7 +75,7 @@ These libraries are responsible for various aspects of the project, such as imag
    - The program will handle authentication when you run the script for the first time.
 
 2. **Mautic API**:
-   - Configure your Mautic API in `config/config.py`:
+   - Configure your Mautic API in `config.py`:
    
    ```python
    MAUTIC_API_URL = "https://example.com"  # Your Mautic base URL
@@ -82,6 +87,18 @@ These libraries are responsible for various aspects of the project, such as imag
 3. **Directory Setup**:
    Ensure the `generated_invitations` and `templates` directories exist as they will store the generated invitations and the invitation template respectively.
 
+4. **Environment Variables**: 
+   - Create a .env file in the root directory and configure the following variables:
+
+    ```
+    TELEGRAM_BOT_TOKEN=<Your Telegram Bot Token>
+    TELEGRAM_CHAT_ID=<Your Telegram Chat ID>
+    RABBITMQ_HOST=<Your RabbitMQ Host>
+    RABBITMQ_PORT=<Your RabbitMQ Port>
+    RABBITMQ_USER=<Your RabbitMQ Username>
+    RABBITMQ_PASSWORD=<Your RabbitMQ Password>
+    ```
+
 ### 3. Running the Project
 To start the program, simply run `app.py`:
 
@@ -89,12 +106,23 @@ To start the program, simply run `app.py`:
 python app.py
 ```
 
-The script will:
-- Fetch contacts from the Mautic form (defined in `config.py`).
-- Generate invitations if they haven’t been generated already.
-- Upload the invitations to Google Drive and update the contact's custom field with the invitation link in Mautic.
+This command will:
+   - Start the Flask app.
+   - Begin fetching contacts from Mautic.
+   - Publish new contacts to RabbitMQ.
+   - Start the RabbitMQ worker to process each contact by generating an invitation, uploading it to Google Drive, and updating Mautic with the invitation link.
+   - Send real-time updates to your Telegram bot for each step of the process.
 
-### 4. Error Handling
+### 4. Telegram Bot Integration
+- The system integrates with a Telegram bot to send real-time updates on contact processing, such as:
+
+    - **Contact Detected**: "New contact detected: <email>"
+    - **Processing**: "Processing contact: <name>, Email: <email>"
+    - **Invitation Created**: "Invitation created for: <name>"
+    - **Link Uploaded**: "Invitation link uploaded to Google Drive: <link>"
+    - **Success**: "Successfully updated contact in Mautic: <email>"
+
+### 5. Error Handling
 - **Authentication Issues**: If there is an issue with Google Drive authentication, the script will guide you through the OAuth2 authentication process in your browser.
 - **Image Processing**: If the face is not detected in the profile picture, a default avatar will be used.
 - **API Rate Limits**: If Mautic or Google Drive rate limits are hit, the script handles retries automatically with exponential backoff.
@@ -136,6 +164,14 @@ def update_invitation_link_in_mautic_by_email(email, invitation_url):
     # Updates the custom field in Mautic with the invitation link based on email
 ```
 
+### 5. Sending Status Updates via Telegram
+The system sends updates about each step of the invitation process (detection, creation, upload, and success) to a Telegram bot:
+
+```python
+def send_message_sync(message):
+    # Sends a synchronous message to the Telegram bot
+```
+
 ## Customization Options
 
 ### Face Detection & Cropping
@@ -147,6 +183,26 @@ def detect_and_crop_face(image):
 ```
 
 You can adjust the detection sensitivity and size by modifying the `scaleFactor` and `minNeighbors` parameters.
+
+### RabbitMQ Integration
+### RabbitMQ for Task Queuing
+RabbitMQ is used to queue the task of creating invitations to prevent the system from getting overwhelmed when processing many contacts simultaneously. The tasks are queued up, and a separate worker (defined in worker.py) processes each contact.
+
+1. Publish Contacts to Queue
+In app.py, contacts are fetched and published to the RabbitMQ queue:
+
+```python
+def publish_to_rabbitmq(contact):
+    # Sends the contact details to RabbitMQ for processing
+```
+
+2. Worker to Process Queue
+The worker.py file listens to the queue and processes each contact. The worker creates the invitations and uploads them to Google Drive:
+
+```python
+def start_worker():
+    # Start RabbitMQ worker to process invitations
+```
 
 ## Additional Features
 - **Crash Recovery**: If the script crashes, it will not regenerate invitations that have already been created. Instead, it resumes where it left off.
